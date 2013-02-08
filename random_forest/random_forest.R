@@ -1,5 +1,6 @@
 library(randomForest)
 library(gbm)
+library(glmnet)
 
 load("../data/train.RData")
 train.orig <- train
@@ -11,6 +12,7 @@ excl <- !(1:ncol(train.all) %in% c(1, 3, 5, 8, 9, grep(".*MOE.*", names(train.al
 train.all <- train.all[, excl]
 
 # Reserve 1/10 as test data
+set.seed(20130207) # Set random seed for reproducible results
 k <- 10
 n <- floor(nrow(train.all)/k)
 s <- sample(1:nrow(train.all), nrow(train.all), replace=F)
@@ -88,17 +90,17 @@ test.input <- data.frame(x1 = predict(rf, test[, indices_to_use]),
                          x3 = as.vector(predict(gl, as.matrix(test[, indices_to_use]), s=0.01)))
 test.output <- predict(blend.mod, test.input)
 
-# Evaluate weighted MAE of the test set
+# ---- Evaluate weighted MAE of the test set ----
 wmae <- function(prediction, data, weights) {
   weighted.mean(abs(prediction - data), weights)
 }
 
-# wmae(rf_preds, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)
 wmae(test.output, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)
 wmae(rf_preds.test, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)
 wmae(bt_preds.test, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)
 wmae(gl_preds.test, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)
 
-# Plot prediction vs actual
-library(ggplot2)
-ggplot(data.frame(obs=test$Mail_Return_Rate_CEN_2010, pred=rf_preds), aes(obs, pred)) + geom_abline() + geom_point(color="blue", alpha=0.2)
+# ---- Plot prediction vs actual ----
+# library(ggplot2)
+# ggplot(data.frame(obs=test$Mail_Return_Rate_CEN_2010, pred=test.output), aes(obs, pred)) + geom_abline() + geom_point(color="blue", alpha=0.2)
+# plot(blend.data)
