@@ -1,6 +1,8 @@
 library(randomForest)
 library(gbm)
 library(glmnet)
+library(lars)
+library(BayesTree)
 
 load("../data/train.RData")
 train.orig <- train
@@ -54,7 +56,7 @@ indices_to_use <- 1:(ncol(train)-2)
 # ---- Random Forest ----
 # rf = randomForest(train[,which(indices_to_use)], y=train$Mail_Return_Rate_CEN_2010, ntree=50, do.trace=T, sampsize=5000)
 rf <- randomForest(train[, indices_to_use], y=train$Mail_Return_Rate_CEN_2010,
-                  ntree=100, do.trace=T, sampsize=10000, keep.forest=T)
+                  ntree=200, do.trace=T, sampsize=10000, keep.forest=T)
 rf_preds <- predict(rf, blend[, indices_to_use])
 rf_preds.test <- predict(rf, test[, indices_to_use])
 
@@ -78,16 +80,32 @@ gl <- glmnet(as.matrix(train[, indices_to_use]), as.vector(train$Mail_Return_Rat
 gl_preds <- predict(gl, as.matrix(blend[, indices_to_use]), s=0.01)
 gl_preds.test <- predict(gl, as.matrix(test[, indices_to_use]), s=0.01)
 
+# ---- LARS Lasso ----
+las <- lars(as.matrix(train[, indices_to_use]), as.vector(train$Mail_Return_Rate_CEN_2010))
+las_preds <- predict(las, as.matrix(blend[, indices_to_use]))
+# ind <- which.min(sapply(1:170, function(i) 
+#   wmae(las_preds$fit[,i], test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)))
+ind <- 129
+las_preds.test <- predict(las, as.matrix(test[, indices_to_use]))
+
+# ---- BART ----
+brt <- bart(train[, indices_to_use], train$Mail_Return_Rate_CEN_2010, 
+            x.test=rbind(blend[, indices_to_use], test[, indices_to_use]))
+brt_preds <- colMeans(brt$yhat.test[, 1:nrow(blend)])
+brt_preds.test <- colMeans(brt$yhat.test[, (nrow(blend)+1):ncol(brt$yhat.test)])
+
 # ---- Blend models ----
 blend.data <- data.frame(y = blend$Mail_Return_Rate_CEN_2010,
                          x1 = rf_preds,
                          x2 = bt_preds,
-                         x3 = as.vector(gl_preds))
-blend.mod <- lm(y ~ x1 + x2 + x3, blend.data)
+                         x3 = las_preds$fit[, ind],
+                         x4 = brt_preds)
+blend.mod <- lm(y ~ x1 + x2 + x3 + x4, blend.data)
 
 test.input <- data.frame(x1 = predict(rf, test[, indices_to_use]),
                          x2 = predict(bt, test[, indices_to_use], n.trees=M),
-                         x3 = as.vector(predict(gl, as.matrix(test[, indices_to_use]), s=0.01)))
+                         x3 = las_preds.test$fit[, ind],
+                         x4 = brt_preds.test)
 test.output <- predict(blend.mod, test.input)
 
 # ---- Evaluate weighted MAE of the test set ----
@@ -95,10 +113,16 @@ wmae <- function(prediction, data, weights) {
   weighted.mean(abs(prediction - data), weights)
 }
 
-wmae(test.output, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)
-wmae(rf_preds.test, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)
-wmae(bt_preds.test, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)
-wmae(gl_preds.test, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)
+cat(sprintf("%-15s: %7.5f\n", "Random Forest", wmae(rf_preds.test, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)))
+cat(sprintf("%-15s: %7.5f\n", "GBM", wmae(bt_preds.test, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)))
+cat(sprintf("%-15s: %7.5f\n", "LASSO", wmae(las_preds.test$fit[, ind], test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)))
+cat(sprintf("%-15s: %7.5f\n", "BART", wmae(brt_preds.test, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)))
+cat(sprintf("%-15s: %7.5f\n", "All Blend", wmae(test.output, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)))
+# wmae(gl_preds.test, test$Mail_Return_Rate_CEN_2010, test_Tot_Population_CEN_2010)
+
+
+
+
 
 # ---- Plot prediction vs actual ----
 # library(ggplot2)
